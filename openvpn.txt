@@ -1,0 +1,170 @@
+_____________________________________________________________
+#############################################################
+1º EXEMPLO DE ARQUIVO DE CONFIGURAÇÃO PARA SERVER-CLIENTE(1 CLIENTE):
+GERAÇÃO DE CHAVE ESTÁTICA
+--openvpn --genkey --secret /etc/openvpn/static.key
+--Server:
+dev tap
+#Usar drive tun
+proto tcp-server
+#Protocolo, "proto udp" para UDP
+port 443
+#Porta onde o server ficará disponível
+keepalive 10 120
+#Ping a cada 10s com 120s de time out
+comp-lzo
+#Habilita compactação, é necessário o pacote izo
+persist-key
+#Mentem arquivo key carregado em caso de queda
+persist-tun
+#Mentem interface tun carregada em caso de queda
+secret static.key
+#Arquivo com a chave estática
+ifconfig 10.0.0.1 255.255.255.0
+--Cliente:
+dev tap
+proto tcp-client
+remote my.server.br 443
+keepalive 10 120
+comp-lzo
+persist-key
+persist-tun
+secret static.key
+ifconfig 10.0.0.2 255.255.255.0
+_____________________________________________________________
+#############################################################
+2º EXEMPLO DE ARQUIVO DE CONFIGURAÇÃO PARA SERVER-CLIENTES(MÚLTIPLOS CLIENTES):
+--Server:
+dev tun
+proto tcp-server
+port 443
+dev tun
+comp-lzo
+keepalive 10 120
+persist​key
+persist​tun
+duplicate-cn
+#Permite que os clientes usem um mesmo certificado
+server 10.0.0.0 255.255.255.0 #REDE QUE O SERVER IRÁ SIMULAR, SENDO ELE DISNPONÍVEL NO
+10.0.0.1
+push "route 192.168.0.0 255.255.255.0"
+#Essa última é opcional. Empura a regra de roteamento nos clientes.
+#Isso irá permitir que as clientes vejam a rede local do server(*assumindo 192.168.0.0 como
+a rede local).
+#Ainda requer que as seguintes regras no server para os pacotes serem roteados(*eth0 a rede
+local):
+#iptables -t nat -s 10.0.0.0/24 -A POSTROUTING -o eth0 -j MASQUERADE
+#echo 1 > /proc/sys/net/ipv4/ip_forward
+#*esses dois comandos devem ser executados a cada inicialização.
+#A opção "server" necessariamente precisa de certificados:
+#Pode-se gerar os próprios ou pegar os exemplos da pasta
+/usr/share/doc/openvpn/examples/samples-keys:
+-->pega-se o arq. ca.crt e colocaque-o no server.
+-->pega-se os arqs. server.crt e server.key e coloca-os no server.
+-->pega-se os arqs. client.crt e client.key e coloca-os no cliente.
+#Com isso só os clientes com os arquivos conseguirão conectar.
+#No server obtem-se:
+dh dh2048.pem
+
+ca ca.crt
+cert server.crt
+key server.key
+--Cliente:
+dev tun
+client #Necessário ao pull
+pull
+#Pucha as configurações empuradas pelo servidor
+remote my.server.br 443
+proto tcp-client
+client
+comp-lzo
+keepalive 10 120
+persist​key
+persist​tun
+#Em razão dos certificados, no cliente obtem-se:
+ca ca.crt
+cert client.crt
+key client.key
+_____________________________________________________________
+#############################################################
+3º EXEMPLO ANTERIOR COMPARTILHANDO A INTERNET POR NAT:
+--Os clientes terão acesso à internet e à rede local do server
+--Server:
+dev tun
+proto tcp-server
+port 443
+dev tun
+comp-lzo
+keepalive 10 120
+persist​key
+persist​tun
+duplicate-cn
+server 192.168.168.0 255.255.255.0
+dh dh2048.pem
+ca ca.crt
+cert server.crt
+key server.key
+push "dhcp-option DNS 8.8.8.8"
+push "dhcp-option DNS 8.8.4.4"
+push "redirect-gateway def1 bypass-dhcp"
+--Cliente (pode incluir os crts e keys no próprio arquivo):
+dev tun
+client
+pull
+remote my.server.br 443
+proto tcp-client
+client
+comp-lzo
+keepalive 10 120
+persist​key
+persist​tun
+ca ca.crt
+cert client.crt
+key client.key
+##################################Debian server:
+apt-get install openvpn
+cd /etc/openvpn
+wget arquivos
+
+vi /etc/sysctl.conf
+#Adicione ou descomente a linha: net.ipv4.ip_forward = 1
+echo 1 > /proc/sys/net/ipv4/ip_forward
+iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+iptables -I FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+iptables-save > /etc/network/iptables.rules
+touch /etc/network/if-pre-up.d/regrasIptables
+chmod +x /etc/network/if-pre-up.d/regrasIptables
+vi /etc/network/if-pre-up.d/regrasIptables
+#Coloque nele:
+#--> #!/bin/sh
+#--> iptables-restore < /etc/network/iptables.rules
+#--> exit 0
+service openvpn restart
+################################CentOS server:
+yum install openvpn
+cd /etc/openvpn
+wget arquivos
+vi /etc/sysctl.conf
+#Adicione ou descomente a linha: net.ipv4.ip_forward = 1
+echo 1 > /proc/sys/net/ipv4/ip_forward
+iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+iptables -I FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+iptables-save > /etc/sysconfig/iptables
+echo 'iptables-restore < /etc/sysconfig/iptables' >> /etc/rc.local
+systemctl mask firewalld
+systemctl stop firewalld
+vi /etc/sysconfig/selinux
+#Certifique que o parâmetro: SELINUX=disabled
+systemctl start openvpn@server
+
+DEIXANDO UM CLIENTE TER ACESSO A REDE LOCAL DO SERVER:
+--echo 1 > /proc/sys/net/ipv4/ip_forward
+#Edite o arq. /etc/sysctl.conf para uma configuração persistente à reinicialização:
+#Descomente a linha do arq.: #net.ipv4.ip_forward=1
+--iptables -t nat -s 10.0.0.2 -A POSTROUTING -o eth0 -j MASQUERADE
+#O cliente 10.0.0.2 pode agora acessar os PCs da rede eth0
+--route add -net 192.168.0.0 netmask 255.255.255.0 gw 10.0.0.1 dev tun0
+#Esse último executado no cliente, fazendo-o consutar o server para acessar a sua rede local
+#(assumindo 192.168.0.0 a rede local do server em eth0)
+
+
